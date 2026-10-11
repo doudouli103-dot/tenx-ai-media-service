@@ -11,8 +11,9 @@ tenx:
     gateway-base-url: ${TENX_AI_GATEWAY_BASE_URL:http://macstudio.tentest.cn:8088/v1}
     gateway-api-key: ${TENX_AI_GATEWAY_API_KEY:local-dev-key}
     public-base-url: ${TENX_MEDIA_PUBLIC_BASE_URL:http://windows.tentest.cn:8092}
-    frames-root: ${TENX_MEDIA_FRAMES_ROOT:\\macstudio.tentest.cn\comfy-output}
-    results-root: ${TENX_MEDIA_RESULTS_ROOT:\\macstudio.tentest.cn\adapter-results}
+    frame-cache-root: ${TENX_MEDIA_FRAME_CACHE_ROOT:data/frame-cache}
+    results-root: ${TENX_MEDIA_RESULTS_ROOT:data/results}
+    max-frame-bytes: ${TENX_MEDIA_MAX_FRAME_BYTES:52428800}
     ffmpeg-path: ${TENX_MEDIA_FFMPEG_PATH:ffmpeg}
     ffmpeg-timeout-millis: ${TENX_MEDIA_FFMPEG_TIMEOUT_MILLIS:600000}
     gateway-timeout-millis: ${TENX_MEDIA_GATEWAY_TIMEOUT_MILLIS:1800000}

@@ -40,6 +40,7 @@ public class MediaJobRepository {
                     MediaJob job = mapper.readValue(path.toFile(), MediaJob.class);
                     if (job.getStatus() == JobStatus.QUEUED
                             || job.getStatus() == JobStatus.GENERATING_FRAMES
+                            || job.getStatus() == JobStatus.DOWNLOADING_FRAMES
                             || job.getStatus() == JobStatus.ENCODING) {
                         job.setError("Media service restarted before the job completed");
                         job.transition(JobStatus.FAILED);

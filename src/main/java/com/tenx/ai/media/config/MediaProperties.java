@@ -11,8 +11,9 @@ public class MediaProperties {
     private String gatewayBaseUrl = "http://macstudio.tentest.cn:8088/v1";
     private String gatewayApiKey = "local-dev-key";
     private String publicBaseUrl = "http://windows.tentest.cn:8092";
-    private String framesRoot = "\\\\macstudio.tentest.cn\\comfy-output";
-    private String resultsRoot = "\\\\macstudio.tentest.cn\\adapter-results";
+    private String frameCacheRoot = "data/frame-cache";
+    private String resultsRoot = "data/results";
+    private long maxFrameBytes = 52428800;
     private String ffmpegPath = "ffmpeg";
     private long ffmpegTimeoutMillis = 600000;
     private long gatewayTimeoutMillis = 1800000;
@@ -26,10 +27,12 @@ public class MediaProperties {
     public void setGatewayApiKey(String value) { this.gatewayApiKey = value; }
     public String getPublicBaseUrl() { return publicBaseUrl; }
     public void setPublicBaseUrl(String value) { this.publicBaseUrl = value; }
-    public String getFramesRoot() { return framesRoot; }
-    public void setFramesRoot(String value) { this.framesRoot = value; }
+    public String getFrameCacheRoot() { return frameCacheRoot; }
+    public void setFrameCacheRoot(String value) { this.frameCacheRoot = value; }
     public String getResultsRoot() { return resultsRoot; }
     public void setResultsRoot(String value) { this.resultsRoot = value; }
+    public long getMaxFrameBytes() { return maxFrameBytes; }
+    public void setMaxFrameBytes(long value) { this.maxFrameBytes = value; }
     public String getFfmpegPath() { return ffmpegPath; }
     public void setFfmpegPath(String value) { this.ffmpegPath = value; }
     public long getFfmpegTimeoutMillis() { return ffmpegTimeoutMillis; }

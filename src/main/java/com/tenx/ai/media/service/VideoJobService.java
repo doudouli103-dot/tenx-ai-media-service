@@ -7,10 +7,10 @@ import com.tenx.ai.media.model.JobStatus;
 import com.tenx.ai.media.model.MediaJob;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.Executor;
@@ -32,16 +32,18 @@ public class VideoJobService {
     private final MediaJobRepository jobs;
     private final Executor executor;
     private final FfmpegRunner ffmpeg;
+    private final FrameDownloader frameDownloader;
 
     public VideoJobService(WebClient gatewayWebClient, MediaProperties properties,
                            MediaJobRepository jobs,
                            @Qualifier("videoJobExecutor") Executor executor,
-                           FfmpegRunner ffmpeg) {
+                           FfmpegRunner ffmpeg, FrameDownloader frameDownloader) {
         this.gateway = gatewayWebClient;
         this.properties = properties;
         this.jobs = jobs;
         this.executor = executor;
         this.ffmpeg = ffmpeg;
+        this.frameDownloader = frameDownloader;
     }
 
     public MediaJob submit(JsonNode request) {
@@ -53,6 +55,10 @@ public class VideoJobService {
         ObjectNode requestCopy = ((ObjectNode) request).deepCopy();
         String id = UUID.randomUUID().toString().replace("-", "");
         MediaJob job = MediaJob.video(id, model);
+        job.setProjectId(optionalText(request, "project_id"));
+        job.setSceneId(optionalText(request, "scene_id"));
+        job.setShotId(optionalText(request, "shot_id"));
+        job.setStartImageResultId(optionalText(request, "start_image_result_id"));
         save(job);
         try {
             executor.execute(() -> run(job, requestCopy));
@@ -86,12 +92,25 @@ public class VideoJobService {
             job.setFramesRelativePath(frames.relativePath);
             job.setFrameCount(frames.frameCount);
             job.setFps(frames.fps);
-            job.transition(JobStatus.ENCODING);
+            job.setSeed(frames.seed);
+            job.setSteps(frames.steps);
+            job.setWorkflowVersion(frames.workflowVersion);
+            job.setReferenceMode(frames.referenceMode);
+            job.transition(JobStatus.DOWNLOADING_FRAMES);
             save(job);
 
-            Path video = ffmpeg.encode(job.getId(), frames.directory, frames.fps);
-            if (!Files.isRegularFile(video) || !Files.isReadable(video) || Files.size(video) == 0) {
-                throw new IllegalStateException("FFmpeg completed without a readable MP4");
+            Path downloadedFrames = null;
+            try {
+                downloadedFrames = frameDownloader.download(job.getId(), frames.resultId,
+                        frames.baseUrl, frames.files);
+                job.transition(JobStatus.ENCODING);
+                save(job);
+                Path video = ffmpeg.encode(job.getId(), downloadedFrames, frames.fps);
+                if (!Files.isRegularFile(video) || !Files.isReadable(video) || Files.size(video) == 0) {
+                    throw new IllegalStateException("FFmpeg completed without a readable MP4");
+                }
+            } finally {
+                frameDownloader.cleanup(downloadedFrames);
             }
             job.setResultUrl(properties.getPublicBaseUrl().replaceAll("/+$", "")
                     + "/api/v1/videos/results/" + job.getId() + "/content");
@@ -118,46 +137,33 @@ public class VideoJobService {
         String pattern = manifest.path("frame_pattern").asText("");
         int frameCount = manifest.path("frame_count").asInt(0);
         int fps = manifest.path("fps").asInt(0);
+        String baseUrl = manifest.path("frames_base_url").asText("");
         if (!RESULT_ID.matcher(resultId).matches()
                 || !FRAMES_PATH.matcher(relativePath).matches()
                 || !relativePath.endsWith(resultId)
                 || !"frame_%05d_.png".equals(pattern)
+                || baseUrl.trim().isEmpty()
                 || frameCount < 1 || frameCount > 1000
                 || fps < 1 || fps > 120) {
             throw new IllegalStateException("Gateway returned an invalid frame manifest");
-        }
-
-        Path root = Paths.get(properties.getFramesRoot()).toAbsolutePath().normalize();
-        if (!Files.isDirectory(root) || !Files.isReadable(root)) {
-            throw new IllegalStateException("SMB frame root is unavailable: " + root);
-        }
-        Path directory = root.resolve(relativePath).normalize();
-        if (!directory.startsWith(root) || !Files.isDirectory(directory) || !Files.isReadable(directory)) {
-            throw new IllegalStateException("Gateway frame directory is unavailable");
-        }
-        Path realRoot = root.toRealPath();
-        Path realDirectory = directory.toRealPath();
-        if (!realDirectory.startsWith(realRoot)) {
-            throw new IllegalStateException("Gateway frame directory escapes the configured SMB root");
         }
 
         JsonNode names = manifest.path("frame_files");
         if (!names.isArray() || names.size() != frameCount) {
             throw new IllegalStateException("Gateway frame list does not match frame_count");
         }
+        List<String> frameFiles = new ArrayList<String>();
         for (int index = 1; index <= frameCount; index++) {
             String expected = String.format(java.util.Locale.ROOT, "frame_%05d_.png", index);
             if (!expected.equals(names.get(index - 1).asText())) {
                 throw new IllegalStateException("Gateway frame list is not contiguous");
             }
-            Path file = realDirectory.resolve(expected).normalize();
-            if (!file.startsWith(realDirectory)
-                    || !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)
-                    || !Files.isReadable(file)) {
-                throw new IllegalStateException("Video frame is missing or unreadable: " + expected);
-            }
+            frameFiles.add(expected);
         }
-        return new FrameManifest(resultId, relativePath, realDirectory, frameCount, fps);
+        return new FrameManifest(resultId, relativePath, baseUrl, frameFiles, frameCount, fps,
+                manifest.path("seed").isIntegralNumber() ? manifest.path("seed").longValue() : null,
+                manifest.path("steps").isInt() ? manifest.path("steps").intValue() : null,
+                optionalText(manifest, "workflow_version"), optionalText(manifest, "reference_mode"));
     }
 
     private void save(MediaJob job) {
@@ -176,6 +182,11 @@ public class VideoJobService {
         return value;
     }
 
+    private String optionalText(JsonNode node, String field) {
+        String value = node.path(field).asText("").trim();
+        return value.isEmpty() ? null : value;
+    }
+
     private String bearer(String apiKey) {
         return "Bearer " + (apiKey == null ? "" : apiKey);
     }
@@ -191,16 +202,28 @@ public class VideoJobService {
     private static class FrameManifest {
         private final String resultId;
         private final String relativePath;
-        private final Path directory;
+        private final String baseUrl;
+        private final List<String> files;
         private final int frameCount;
         private final int fps;
+        private final Long seed;
+        private final Integer steps;
+        private final String workflowVersion;
+        private final String referenceMode;
 
-        private FrameManifest(String resultId, String relativePath, Path directory, int frameCount, int fps) {
+        private FrameManifest(String resultId, String relativePath, String baseUrl, List<String> files,
+                              int frameCount, int fps, Long seed, Integer steps,
+                              String workflowVersion, String referenceMode) {
             this.resultId = resultId;
             this.relativePath = relativePath;
-            this.directory = directory;
+            this.baseUrl = baseUrl;
+            this.files = files;
             this.frameCount = frameCount;
             this.fps = fps;
+            this.seed = seed;
+            this.steps = steps;
+            this.workflowVersion = workflowVersion;
+            this.referenceMode = referenceMode;
         }
     }
 }

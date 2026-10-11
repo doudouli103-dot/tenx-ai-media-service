@@ -12,6 +12,14 @@ public class MediaJob {
     private String framesRelativePath;
     private Integer frameCount;
     private Integer fps;
+    private String projectId;
+    private String sceneId;
+    private String shotId;
+    private String startImageResultId;
+    private Long seed;
+    private Integer steps;
+    private String workflowVersion;
+    private String referenceMode;
     private String resultUrl;
     private String error;
 
@@ -55,6 +63,22 @@ public class MediaJob {
     public void setFrameCount(Integer value) { this.frameCount = value; }
     public Integer getFps() { return fps; }
     public void setFps(Integer value) { this.fps = value; }
+    public String getProjectId() { return projectId; }
+    public void setProjectId(String value) { this.projectId = value; }
+    public String getSceneId() { return sceneId; }
+    public void setSceneId(String value) { this.sceneId = value; }
+    public String getShotId() { return shotId; }
+    public void setShotId(String value) { this.shotId = value; }
+    public String getStartImageResultId() { return startImageResultId; }
+    public void setStartImageResultId(String value) { this.startImageResultId = value; }
+    public Long getSeed() { return seed; }
+    public void setSeed(Long value) { this.seed = value; }
+    public Integer getSteps() { return steps; }
+    public void setSteps(Integer value) { this.steps = value; }
+    public String getWorkflowVersion() { return workflowVersion; }
+    public void setWorkflowVersion(String value) { this.workflowVersion = value; }
+    public String getReferenceMode() { return referenceMode; }
+    public void setReferenceMode(String value) { this.referenceMode = value; }
     public String getResultUrl() { return resultUrl; }
     public void setResultUrl(String value) { this.resultUrl = value; }
     public String getError() { return error; }
