@@ -1,0 +1,19 @@
+server:
+  port: ${TENX_MEDIA_PORT:8092}
+
+spring:
+  application:
+    name: tenx-ai-media-service
+
+tenx:
+  media:
+    api-keys: ${TENX_MEDIA_API_KEYS:local-dev-key}
+    gateway-base-url: ${TENX_AI_GATEWAY_BASE_URL:http://macstudio.tentest.cn:8088/v1}
+    gateway-api-key: ${TENX_AI_GATEWAY_API_KEY:local-dev-key}
+    public-base-url: ${TENX_MEDIA_PUBLIC_BASE_URL:http://windows.tentest.cn:8092}
+    frames-root: ${TENX_MEDIA_FRAMES_ROOT:\\macstudio.tentest.cn\comfy-output}
+    results-root: ${TENX_MEDIA_RESULTS_ROOT:\\macstudio.tentest.cn\adapter-results}
+    ffmpeg-path: ${TENX_MEDIA_FFMPEG_PATH:ffmpeg}
+    ffmpeg-timeout-millis: ${TENX_MEDIA_FFMPEG_TIMEOUT_MILLIS:600000}
+    gateway-timeout-millis: ${TENX_MEDIA_GATEWAY_TIMEOUT_MILLIS:1800000}
+    max-concurrent-video-jobs: ${TENX_MEDIA_MAX_CONCURRENT_VIDEO_JOBS:1}
