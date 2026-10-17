@@ -22,6 +22,11 @@ public class MediaJob {
     private String referenceMode;
     private String resultUrl;
     private String error;
+    private boolean audioEnabled;
+    private String audioText;
+    private String audioVoice;
+    private String audioId;
+    private Double audioDurationSeconds;
 
     public MediaJob() {
     }
@@ -83,4 +88,14 @@ public class MediaJob {
     public void setResultUrl(String value) { this.resultUrl = value; }
     public String getError() { return error; }
     public void setError(String value) { this.error = value; }
+    public boolean isAudioEnabled() { return audioEnabled; }
+    public void setAudioEnabled(boolean value) { this.audioEnabled = value; }
+    public String getAudioText() { return audioText; }
+    public void setAudioText(String value) { this.audioText = value; }
+    public String getAudioVoice() { return audioVoice; }
+    public void setAudioVoice(String value) { this.audioVoice = value; }
+    public String getAudioId() { return audioId; }
+    public void setAudioId(String value) { this.audioId = value; }
+    public Double getAudioDurationSeconds() { return audioDurationSeconds; }
+    public void setAudioDurationSeconds(Double value) { this.audioDurationSeconds = value; }
 }

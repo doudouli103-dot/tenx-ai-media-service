@@ -4,6 +4,7 @@ public enum JobStatus {
     QUEUED,
     GENERATING_FRAMES,
     DOWNLOADING_FRAMES,
+    GENERATING_AUDIO,
     ENCODING,
     COMPLETED,
     FAILED

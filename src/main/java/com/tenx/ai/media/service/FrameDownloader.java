@@ -1,6 +1,7 @@
 package com.tenx.ai.media.service;
 
 import com.tenx.ai.media.config.MediaProperties;
+import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -17,7 +18,7 @@ import java.util.List;
 import java.util.stream.Stream;
 import org.springframework.stereotype.Component;
 
-/** Downloads an authenticated Gateway frame manifest into a disposable local job directory. */
+/** Downloads authenticated Gateway frames into a persistent local job directory. */
 @Component
 public class FrameDownloader {
 
@@ -33,8 +34,8 @@ public class FrameDownloader {
                 + "/videos/results/" + resultId + "/frames";
         URI actual = parseHttpUri(framesBaseUrl);
         URI expected = parseHttpUri(expectedBase);
-        if (!sameEndpoint(expected, actual)) {
-            throw new IllegalStateException("Gateway frame URL does not match the configured Gateway");
+        if (!expected.getPath().equals(actual.getPath())) {
+            throw new IllegalStateException("Gateway frame URL has an unexpected path");
         }
 
         Path cacheRoot = Paths.get(properties.getFrameCacheRoot()).toAbsolutePath().normalize();
@@ -43,11 +44,10 @@ public class FrameDownloader {
         if (!directory.startsWith(cacheRoot)) {
             throw new IllegalStateException("Frame cache path escapes the configured root");
         }
-        cleanup(directory);
-        Files.createDirectories(directory);
+        Files.createDirectory(directory);
         try {
             for (String filename : frameFiles) {
-                downloadOne(actual.toString() + "/" + filename, directory.resolve(filename));
+                downloadOne(expected.toString() + "/" + filename, directory.resolve(filename));
             }
             return directory;
         } catch (IOException | RuntimeException exception) {
@@ -116,12 +116,16 @@ public class FrameDownloader {
                     }
                     output.write(buffer, 0, read);
                 }
-                if (total == 0) {
-                    throw new IOException("Gateway returned an empty frame");
+                if (total < 8) {
+                    throw new IOException("Gateway returned an empty or invalid frame");
                 }
             } catch (IOException exception) {
                 Files.deleteIfExists(temporary);
                 throw exception;
+            }
+            if (!isPng(temporary)) {
+                Files.deleteIfExists(temporary);
+                throw new IOException("Gateway frame does not contain PNG data");
             }
             Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
         } finally {
@@ -142,16 +146,13 @@ public class FrameDownloader {
         }
     }
 
-    private boolean sameEndpoint(URI expected, URI actual) {
-        return expected.getScheme().equalsIgnoreCase(actual.getScheme())
-                && expected.getHost().equalsIgnoreCase(actual.getHost())
-                && effectivePort(expected) == effectivePort(actual)
-                && expected.getPath().equals(actual.getPath());
-    }
-
-    private int effectivePort(URI uri) {
-        if (uri.getPort() >= 0) return uri.getPort();
-        return "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
+    private boolean isPng(Path file) throws IOException {
+        byte[] signature = new byte[8];
+        try (DataInputStream input = new DataInputStream(Files.newInputStream(file))) {
+            input.readFully(signature);
+        }
+        byte[] expected = {(byte) 137, 80, 78, 71, 13, 10, 26, 10};
+        return java.util.Arrays.equals(signature, expected);
     }
 
     private String safe(String value) {

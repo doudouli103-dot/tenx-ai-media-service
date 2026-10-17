@@ -41,6 +41,7 @@ public class MediaJobRepository {
                     if (job.getStatus() == JobStatus.QUEUED
                             || job.getStatus() == JobStatus.GENERATING_FRAMES
                             || job.getStatus() == JobStatus.DOWNLOADING_FRAMES
+                            || job.getStatus() == JobStatus.GENERATING_AUDIO
                             || job.getStatus() == JobStatus.ENCODING) {
                         job.setError("Media service restarted before the job completed");
                         job.transition(JobStatus.FAILED);

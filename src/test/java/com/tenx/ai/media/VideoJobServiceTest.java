@@ -7,7 +7,10 @@ import com.sun.net.httpserver.HttpServer;
 import com.tenx.ai.media.config.MediaProperties;
 import com.tenx.ai.media.model.JobStatus;
 import com.tenx.ai.media.model.MediaJob;
+import com.tenx.ai.media.model.SpeechAudio;
+import com.tenx.ai.media.model.SpeechRequest;
 import com.tenx.ai.media.service.FfmpegRunner;
+import com.tenx.ai.media.service.CosyVoiceService;
 import com.tenx.ai.media.service.FrameDownloader;
 import com.tenx.ai.media.service.MediaJobRepository;
 import com.tenx.ai.media.service.VideoJobService;
@@ -37,6 +40,20 @@ public class VideoJobServiceTest {
 
     @Test
     public void generatesFramesAndEncodesFinalVideo() throws Exception {
+        assertPipeline(false, false);
+    }
+
+    @Test
+    public void generatesSpeechAndPassesItToEncoder() throws Exception {
+        assertPipeline(true, false);
+    }
+
+    @Test
+    public void speechFailureFailsJobInsteadOfReturningSilentVideo() throws Exception {
+        assertPipeline(true, true);
+    }
+
+    private void assertPipeline(boolean withAudio, boolean speechFailure) throws Exception {
         ObjectMapper mapper = new ObjectMapper();
         Path resultsRoot = temporary.resolve("results");
         Path frameCache = temporary.resolve("frame-cache");
@@ -63,10 +80,12 @@ public class VideoJobServiceTest {
         manifest.set("frame_files", frameFiles);
 
         AtomicReference<String> authorization = new AtomicReference<String>();
+        AtomicReference<com.fasterxml.jackson.databind.JsonNode> gatewayRequest = new AtomicReference<>();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        manifest.put("frames_base_url", "http://127.0.0.1:" + server.getAddress().getPort()
+        manifest.put("frames_base_url", "http://macstudio.tentest.cn:8088"
                 + "/v1/videos/results/" + gatewayResultId + "/frames");
         server.createContext("/v1/videos/generations", exchange -> {
+            gatewayRequest.set(mapper.readTree(exchange.getRequestBody()));
             authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
             byte[] body = mapper.writeValueAsBytes(manifest);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
@@ -76,7 +95,7 @@ public class VideoJobServiceTest {
         });
         server.createContext("/v1/videos/results/" + gatewayResultId + "/frames/", exchange -> {
             authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
-            byte[] body = new byte[] {1, 2, 3};
+            byte[] body = {(byte) 137, 80, 78, 71, 13, 10, 26, 10, 1};
             exchange.getResponseHeaders().set("Content-Type", "image/png");
             exchange.sendResponseHeaders(200, body.length);
             exchange.getResponseBody().write(body);
@@ -93,10 +112,31 @@ public class VideoJobServiceTest {
         MediaJobRepository repository = new MediaJobRepository(mapper, properties);
         repository.load();
         FfmpegRunner ffmpeg = Mockito.mock(FfmpegRunner.class);
+        CosyVoiceService cosyvoice = Mockito.mock(CosyVoiceService.class);
+        if (withAudio) {
+            if (speechFailure) {
+                Mockito.when(cosyvoice.generate(Mockito.anyString(), Mockito.any(SpeechRequest.class)))
+                        .thenThrow(new IllegalStateException("CosyVoice unavailable"));
+            } else {
+                Mockito.when(cosyvoice.generate(Mockito.anyString(), Mockito.any(SpeechRequest.class)))
+                        .thenAnswer(invocation -> new SpeechAudio(temporary.resolve("speech.wav"),
+                                "0123456789abcdef0123456789abcdef", 2.5));
+                Mockito.when(ffmpeg.encode(Mockito.anyString(), Mockito.any(Path.class), Mockito.eq(24),
+                        Mockito.eq(25), Mockito.any(SpeechAudio.class))).thenAnswer(invocation -> {
+                    SpeechAudio audio = invocation.getArgument(4);
+                    Assertions.assertEquals(2.5, audio.getDurationSeconds());
+                    Path video = resultsRoot.resolve("videos").resolve(invocation.getArgument(0) + ".mp4");
+                    Files.createDirectories(video.getParent());
+                    Files.write(video, new byte[] {0, 0, 0, 1});
+                    return video;
+                });
+            }
+        }
         Mockito.when(ffmpeg.encode(Mockito.anyString(), Mockito.any(Path.class), Mockito.eq(24)))
                 .thenAnswer(invocation -> {
                     String jobId = invocation.getArgument(0);
                     Path downloaded = invocation.getArgument(1);
+                    Assertions.assertEquals(frameCache.resolve(jobId), downloaded);
                     Assertions.assertTrue(Files.isRegularFile(downloaded.resolve("frame_00001_.png")));
                     Assertions.assertTrue(Files.isRegularFile(downloaded.resolve("frame_00025_.png")));
                     Path video = resultsRoot.resolve("videos").resolve(jobId + ".mp4");
@@ -109,7 +149,7 @@ public class VideoJobServiceTest {
                 .build();
         Executor direct = Runnable::run;
         VideoJobService service = new VideoJobService(gateway, properties, repository, direct, ffmpeg,
-                new FrameDownloader(properties));
+                new FrameDownloader(properties), cosyvoice);
         ObjectNode request = mapper.createObjectNode();
         request.put("model", "Wan2.2-TI2V-5B");
         request.put("prompt", "robot walking");
@@ -118,8 +158,24 @@ public class VideoJobServiceTest {
         request.put("scene_id", "scene-001");
         request.put("shot_id", "shot-001");
         request.put("start_image_result_id", "tenx_0123456789abcdef0123456789abcdef_00001_");
+        if (withAudio) request.putObject("audio").put("text", "欢迎来到动漫世界。");
 
         MediaJob job = service.submit(request);
+
+        Assertions.assertFalse(gatewayRequest.get().has("audio"));
+        Assertions.assertEquals(withAudio, job.isAudioEnabled());
+        if (!withAudio) Mockito.verifyNoInteractions(cosyvoice);
+        if (speechFailure) {
+            Assertions.assertEquals(JobStatus.FAILED, job.getStatus());
+            Assertions.assertTrue(job.getError().contains("CosyVoice"));
+            Mockito.verifyNoInteractions(ffmpeg);
+            return;
+        }
+        if (withAudio) {
+            Assertions.assertEquals("demo", job.getAudioVoice());
+            Assertions.assertEquals(2.5, job.getAudioDurationSeconds());
+            Assertions.assertEquals("欢迎来到动漫世界。", job.getAudioText());
+        }
 
         Assertions.assertEquals(JobStatus.COMPLETED, job.getStatus());
         Assertions.assertEquals(25, job.getFrameCount().intValue());
@@ -132,9 +188,10 @@ public class VideoJobServiceTest {
         Assertions.assertEquals("short-drama-v1", job.getWorkflowVersion());
         Assertions.assertEquals("start_frame", job.getReferenceMode());
         Assertions.assertEquals("Bearer gateway-key", authorization.get());
+        Assertions.assertTrue(Files.isRegularFile(frameCache.resolve(job.getId()).resolve("frame_00001_.png")));
         Assertions.assertEquals("http://windows.test:8092/api/v1/videos/results/" + job.getId() + "/content",
                 job.getResultUrl());
         Assertions.assertTrue(Files.isRegularFile(resultsRoot.resolve("jobs").resolve(job.getId() + ".json")));
-        Assertions.assertFalse(Files.exists(frameCache.resolve(job.getId())));
+        Assertions.assertTrue(Files.exists(frameCache.resolve(job.getId())));
     }
 }

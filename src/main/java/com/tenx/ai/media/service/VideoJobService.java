@@ -5,12 +5,15 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.tenx.ai.media.config.MediaProperties;
 import com.tenx.ai.media.model.JobStatus;
 import com.tenx.ai.media.model.MediaJob;
+import com.tenx.ai.media.model.SpeechRequest;
+import com.tenx.ai.media.model.SpeechAudio;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.Executor;
@@ -33,17 +36,20 @@ public class VideoJobService {
     private final Executor executor;
     private final FfmpegRunner ffmpeg;
     private final FrameDownloader frameDownloader;
+    private final CosyVoiceService cosyvoice;
 
     public VideoJobService(WebClient gatewayWebClient, MediaProperties properties,
                            MediaJobRepository jobs,
                            @Qualifier("videoJobExecutor") Executor executor,
-                           FfmpegRunner ffmpeg, FrameDownloader frameDownloader) {
+                           FfmpegRunner ffmpeg, FrameDownloader frameDownloader,
+                           CosyVoiceService cosyvoice) {
         this.gateway = gatewayWebClient;
         this.properties = properties;
         this.jobs = jobs;
         this.executor = executor;
         this.ffmpeg = ffmpeg;
         this.frameDownloader = frameDownloader;
+        this.cosyvoice = cosyvoice;
     }
 
     public MediaJob submit(JsonNode request) {
@@ -53,15 +59,21 @@ public class VideoJobService {
         String model = requiredText(request, "model");
         requiredText(request, "prompt");
         ObjectNode requestCopy = ((ObjectNode) request).deepCopy();
+        SpeechRequest speech = SpeechRequest.parse(requestCopy.remove("audio"));
         String id = UUID.randomUUID().toString().replace("-", "");
         MediaJob job = MediaJob.video(id, model);
+        job.setAudioEnabled(speech != null);
+        if (speech != null) {
+            job.setAudioText(speech.getText());
+            job.setAudioVoice(speech.getVoice());
+        }
         job.setProjectId(optionalText(request, "project_id"));
         job.setSceneId(optionalText(request, "scene_id"));
         job.setShotId(optionalText(request, "shot_id"));
         job.setStartImageResultId(optionalText(request, "start_image_result_id"));
         save(job);
         try {
-            executor.execute(() -> run(job, requestCopy));
+            executor.execute(() -> run(job, requestCopy, speech));
         } catch (RuntimeException exception) {
             job.setError("Video job queue is full or unavailable");
             job.transition(JobStatus.FAILED);
@@ -74,7 +86,7 @@ public class VideoJobService {
         return jobs.find(id);
     }
 
-    private void run(MediaJob job, ObjectNode request) {
+    private void run(MediaJob job, ObjectNode request, SpeechRequest speech) {
         try {
             job.transition(JobStatus.GENERATING_FRAMES);
             save(job);
@@ -99,18 +111,23 @@ public class VideoJobService {
             job.transition(JobStatus.DOWNLOADING_FRAMES);
             save(job);
 
-            Path downloadedFrames = null;
-            try {
-                downloadedFrames = frameDownloader.download(job.getId(), frames.resultId,
-                        frames.baseUrl, frames.files);
-                job.transition(JobStatus.ENCODING);
+            Path frameDirectory = frameDownloader.download(job.getId(), frames.resultId,
+                    frames.baseUrl, frames.files);
+            SpeechAudio audio = null;
+            if (speech != null) {
+                job.transition(JobStatus.GENERATING_AUDIO);
                 save(job);
-                Path video = ffmpeg.encode(job.getId(), downloadedFrames, frames.fps);
-                if (!Files.isRegularFile(video) || !Files.isReadable(video) || Files.size(video) == 0) {
-                    throw new IllegalStateException("FFmpeg completed without a readable MP4");
-                }
-            } finally {
-                frameDownloader.cleanup(downloadedFrames);
+                audio = cosyvoice.generate(job.getId(), speech);
+                job.setAudioId(audio.getId());
+                job.setAudioDurationSeconds(audio.getDurationSeconds());
+            }
+            job.transition(JobStatus.ENCODING);
+            save(job);
+
+            Path video = audio == null ? ffmpeg.encode(job.getId(), frameDirectory, frames.fps)
+                    : ffmpeg.encode(job.getId(), frameDirectory, frames.fps, frames.frameCount, audio);
+            if (!Files.isRegularFile(video) || !Files.isReadable(video) || Files.size(video) == 0) {
+                throw new IllegalStateException("FFmpeg completed without a readable MP4");
             }
             job.setResultUrl(properties.getPublicBaseUrl().replaceAll("/+$", "")
                     + "/api/v1/videos/results/" + job.getId() + "/content");
@@ -127,7 +144,7 @@ public class VideoJobService {
         }
     }
 
-    private FrameManifest validateManifest(JsonNode manifest) throws IOException {
+    private FrameManifest validateManifest(JsonNode manifest) {
         if (manifest == null || !"frames_ready".equals(manifest.path("status").asText())
                 || !"image_sequence".equals(manifest.path("output_type").asText())) {
             throw new IllegalStateException("Gateway did not return a ready image sequence");
@@ -152,9 +169,9 @@ public class VideoJobService {
         if (!names.isArray() || names.size() != frameCount) {
             throw new IllegalStateException("Gateway frame list does not match frame_count");
         }
-        List<String> frameFiles = new ArrayList<String>();
+        List<String> frameFiles = new ArrayList<String>(frameCount);
         for (int index = 1; index <= frameCount; index++) {
-            String expected = String.format(java.util.Locale.ROOT, "frame_%05d_.png", index);
+            String expected = String.format(Locale.ROOT, "frame_%05d_.png", index);
             if (!expected.equals(names.get(index - 1).asText())) {
                 throw new IllegalStateException("Gateway frame list is not contiguous");
             }

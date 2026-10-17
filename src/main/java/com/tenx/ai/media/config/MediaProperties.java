@@ -18,6 +18,10 @@ public class MediaProperties {
     private long ffmpegTimeoutMillis = 600000;
     private long gatewayTimeoutMillis = 1800000;
     private int maxConcurrentVideoJobs = 1;
+    private String cosyvoiceBaseUrl = "http://localhost:4030";
+    private String cosyvoiceApiKey = "";
+    private long cosyvoiceTimeoutMillis = 3600000;
+    private String audioRoot = "data/audio";
 
     public List<String> getApiKeys() { return apiKeys; }
     public void setApiKeys(List<String> value) { this.apiKeys = value; }
@@ -41,4 +45,12 @@ public class MediaProperties {
     public void setGatewayTimeoutMillis(long value) { this.gatewayTimeoutMillis = value; }
     public int getMaxConcurrentVideoJobs() { return maxConcurrentVideoJobs; }
     public void setMaxConcurrentVideoJobs(int value) { this.maxConcurrentVideoJobs = value; }
+    public String getCosyvoiceBaseUrl() { return cosyvoiceBaseUrl; }
+    public void setCosyvoiceBaseUrl(String value) { this.cosyvoiceBaseUrl = value; }
+    public String getCosyvoiceApiKey() { return cosyvoiceApiKey; }
+    public void setCosyvoiceApiKey(String value) { this.cosyvoiceApiKey = value; }
+    public long getCosyvoiceTimeoutMillis() { return cosyvoiceTimeoutMillis; }
+    public void setCosyvoiceTimeoutMillis(long value) { this.cosyvoiceTimeoutMillis = value; }
+    public String getAudioRoot() { return audioRoot; }
+    public void setAudioRoot(String value) { this.audioRoot = value; }
 }

@@ -18,3 +18,7 @@ tenx:
     ffmpeg-timeout-millis: ${TENX_MEDIA_FFMPEG_TIMEOUT_MILLIS:600000}
     gateway-timeout-millis: ${TENX_MEDIA_GATEWAY_TIMEOUT_MILLIS:1800000}
     max-concurrent-video-jobs: ${TENX_MEDIA_MAX_CONCURRENT_VIDEO_JOBS:1}
+    cosyvoice-base-url: ${TENX_COSYVOICE_BASE_URL:http://localhost:4030}
+    cosyvoice-api-key: ${TENX_COSYVOICE_API_KEY:}
+    cosyvoice-timeout-millis: ${TENX_COSYVOICE_TIMEOUT_MILLIS:3600000}
+    audio-root: ${TENX_MEDIA_AUDIO_ROOT:data/audio}
