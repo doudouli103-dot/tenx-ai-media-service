@@ -24,6 +24,14 @@ import static org.junit.jupiter.api.Assertions.*;
 @EnabledIfEnvironmentVariable(named = "TENX_COSYVOICE_SMOKE", matches = "true")
 public class CosyVoicePipelineSmokeTest {
     @Test public void realSpeechIsAudibleInFinalMp4() throws Exception {
+        verifyPipeline(false);
+    }
+
+    @Test public void realDialogueIsMuxedInFinalMp4() throws Exception {
+        verifyPipeline(true);
+    }
+
+    private void verifyPipeline(boolean dialogue) throws Exception {
         ObjectMapper mapper = new ObjectMapper();
         Path root = Paths.get("target/cosyvoice-smoke").toAbsolutePath();
         MediaProperties properties = new MediaProperties();
@@ -69,9 +77,17 @@ public class CosyVoicePipelineSmokeTest {
                     .baseUrl(properties.getGatewayBaseUrl() + "/").build(), properties, repository, Runnable::run,
                     new FfmpegRunner(properties), new FrameDownloader(properties), new CosyVoiceService(properties));
             ObjectNode request = mapper.createObjectNode().put("model", "Wan2.2-TI2V-5B").put("prompt", "test scene");
-            request.putObject("audio").put("text", "你好，欢迎来到动漫世界。").put("voice", "demo");
+            if (dialogue) {
+                com.fasterxml.jackson.databind.node.ArrayNode lines = request.putObject("audio").putArray("dialogues");
+                lines.addObject().put("speaker", "小雨").put("text", "小雨：你好。").put("voice", "demo").put("instructions", "轻声说。").put("pause_ms", 500);
+                lines.addObject().put("speaker", "阿零").put("text", "我们出发吧。").put("voice", "demo").put("instructions", "开心地说。").put("pause_ms", 0);
+            } else request.putObject("audio").put("text", "你好，欢迎来到动漫世界。").put("voice", "demo");
             MediaJob job = service.submit(request);
             assertEquals(JobStatus.COMPLETED, job.getStatus(), job.getError());
+            if (dialogue) {
+                assertEquals(2, job.getAudioDialogues().size());
+                assertEquals("你好。", job.getAudioDialogues().get(0).path("text").asText());
+            }
             Path video = root.resolve("videos").resolve(job.getId() + ".mp4");
             JsonNode probe = FfmpegAudioTest.probe(video, root.resolve("probe.json"));
             boolean hasAudio = false;

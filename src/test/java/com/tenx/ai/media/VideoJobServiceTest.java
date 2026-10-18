@@ -44,6 +44,28 @@ public class VideoJobServiceTest {
     }
 
     @Test
+    public void unknownVoiceIsRejectedBeforeCallingGateway() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        MediaProperties properties = new MediaProperties();
+        properties.setResultsRoot(temporary.resolve("rejected").toString());
+        MediaJobRepository repository = new MediaJobRepository(mapper, properties);
+        repository.load();
+        CosyVoiceService speech = Mockito.mock(CosyVoiceService.class);
+        Mockito.doThrow(new IllegalArgumentException("Unknown voice: missing")).when(speech)
+                .validateVoices(Mockito.any(SpeechRequest.class));
+        WebClient gateway = Mockito.mock(WebClient.class);
+        VideoJobService service = new VideoJobService(gateway, properties, repository, Runnable::run,
+                Mockito.mock(FfmpegRunner.class), Mockito.mock(FrameDownloader.class), speech);
+        ObjectNode request = mapper.createObjectNode().put("model", "Wan2.2-TI2V-5B").put("prompt", "test");
+        request.putObject("audio").putArray("dialogues").addObject().put("speaker", "小雨").put("text", "你好").put("voice", "missing");
+        MediaJob job = service.submit(request);
+        Assertions.assertEquals(JobStatus.FAILED, job.getStatus());
+        Assertions.assertTrue(job.getError().contains("Unknown voice"));
+        Assertions.assertEquals(1, job.getAudioDialogues().size());
+        Mockito.verifyNoInteractions(gateway);
+    }
+
+    @Test
     public void generatesSpeechAndPassesItToEncoder() throws Exception {
         assertPipeline(true, false);
     }

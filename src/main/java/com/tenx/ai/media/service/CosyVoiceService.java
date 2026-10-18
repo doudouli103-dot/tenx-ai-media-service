@@ -3,6 +3,10 @@ package com.tenx.ai.media.service;
 import com.tenx.ai.media.config.MediaProperties;
 import com.tenx.ai.media.model.SpeechAudio;
 import com.tenx.ai.media.model.SpeechRequest;
+import com.fasterxml.jackson.databind.JsonNode;
+import java.util.HashSet;
+import java.util.Set;
+import reactor.core.publisher.Mono;
 import io.netty.channel.ChannelOption;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -73,6 +77,26 @@ public class CosyVoiceService {
         }
         String id = response.getHeaders().getFirst("X-Audio-Id");
         return new SpeechAudio(target, id != null && id.matches("[0-9a-f]{32}") ? id : null, duration);
+    }
+
+    public Mono<JsonNode> voices() {
+        return client.get().uri("v1/audio/voices").headers(headers -> {
+                    String key = properties.getCosyvoiceApiKey();
+                    if (key != null && !key.trim().isEmpty()) headers.setBearerAuth(key);
+                }).retrieve().bodyToMono(JsonNode.class).timeout(Duration.ofSeconds(10))
+                .onErrorMap(error -> new IllegalStateException("Cannot load CosyVoice voices; check service availability"));
+    }
+
+    public void validateVoices(SpeechRequest speech) {
+        JsonNode installed = voices().block(Duration.ofSeconds(12));
+        if (installed == null || !installed.path("voices").isArray()) throw new IllegalStateException("Invalid voice list");
+        Set<String> ids = new HashSet<String>();
+        for (JsonNode voice : installed.path("voices")) ids.add(voice.path("id").asText());
+        if (speech.getDialogues() != null) {
+            for (JsonNode line : speech.getDialogues()) {
+                if (!ids.contains(line.path("voice").asText())) throw new IllegalArgumentException("Unknown voice: " + line.path("voice").asText());
+            }
+        } else if (!ids.contains(speech.getVoice())) throw new IllegalArgumentException("Unknown voice: " + speech.getVoice());
     }
 
     private double wavDuration(byte[] wav) throws IOException {

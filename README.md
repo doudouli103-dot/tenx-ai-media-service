@@ -2,6 +2,35 @@
 
 Windows media service for the Tenx AI stack. It keeps FFmpeg work off the Mac Studio.
 
+## Multi-shot dramas (2–12 shots, up to 60 seconds)
+
+`POST /api/v1/dramas/generations` accepts a persisted plan; all drama endpoints require the existing media API key:
+
+```json
+{
+  "model": "Wan2.2-TI2V-5B",
+  "size": "640x352",
+  "character_prompt": "Red armored robot with a blue blade; black opponent with shoulder cannons. Consistent anime style.",
+  "shots": [
+    {"prompt": "Red robot punches; black robot blocks, sparks at contact.", "duration": 5, "continue_previous": false},
+    {"prompt": "Black robot counterattacks; red robot dodges sideways.", "duration": 5, "continue_previous": true,
+     "audio": {"dialogues": [{"speaker": "Guard", "text": "Too slow!", "voice": "demo", "pause_ms": 0}]}}
+  ]
+}
+```
+
+- Each shot is 1–5 seconds. Only Wan is enabled for the first drama implementation. Repeat/add shots to reach 20/30/60 seconds; no long single inference is requested.
+- Optional plan-level `start_image_result_id` applies to independent shots; a shot-level image overrides it. Tail-continuation shots use `start_video_result_id` instead and may not specify their own image.
+- Deploy the updated **Mac gateway first**: previous versions cannot resolve video-tail references. ComfyUI workflow/model installation does not change; no SMB/file sharing is needed. Gateway output PNGs must remain available for dependent shots.
+- The media worker checks all voice IDs first, then serially generates each shot's audio, rejects overlong speech **before generating that shot's frames**, downloads frames, and encodes H.264 + mono 24kHz AAC. Silent shots receive silent audio for compatible concatenation. No video freeze padding is used in drama mode. Legacy single-shot behavior is unchanged.
+- Status/list/download reuse `/api/v1/videos/jobs/{id}`, `/api/v1/videos/jobs` and `/api/v1/videos/results/{id}/content`. Parents have `type: "drama"`, `dramaRequest`, `dramaShots`, `currentShotIndex` (zero-based), and `dynamicDurationSeconds` (planned duration until completion). Internal children have `parentId`; the UI hides them from the top-level list.
+- `POST /api/v1/dramas/jobs/{id}/retry` with `{}` resumes missing/failed shots and keeps completed shots. With `{"shot_index": 1}` it regenerates that shot and following consecutive tail-dependent shots, stopping invalidation at the next independent shot. Both modes reassemble the final video. Concurrent retries are rejected.
+- To fix an overlong line or change a visual prompt, send `{"shot_index": 1, "shot": {"prompt": "...", "duration": 5, "continue_previous": true, "audio": {"dialogues": [...]}}}`. `shot` is a full replacement, validated before altering the existing plan. Only that shot and its tail-dependent chain are invalidated.
+- Jobs and child results are checkpointed in `results-root/jobs`; after a service restart unfinished parents become failed and can be manually resumed. This does not automatically restart work. Intermediate frames/audio and MP4s use the existing configured storage roots/mounts; no files are automatically removed.
+- Tail references help composition continuity, not guaranteed character identity, seamless motion, or lip sync. Changing camera angle should normally use an independent shot.
+
+Verification: `mvn test`; optional real FFmpeg fixture test: `mvn test "-Dtenx.ffmpeg=ffmpeg"` (also requires `ffprobe`). The latter writes a 30-second moving-shape fixture under `target/drama-smoke`, not AI-generated robot footage.
+
 ## Responsibilities
 
 - Accept image and video generation requests from WebUI or `video-agent`.
@@ -148,7 +177,45 @@ List jobs:
 GET /api/v1/videos/jobs
 ```
 
-### CosyVoice audio options
+### Multi-role dialogue and speech preview
+
+Send `audio.dialogues` instead of `audio.text` (never both):
+
+```json
+{
+  "dialogues": [
+    {"speaker":"小雨","text":"地图说，最后一颗星就在这里。","voice":"xiaoyu","instructions":"轻声说，带着期待。","speed":1.0,"pause_ms":400},
+    {"speaker":"阿零","text":"可这里……只有我们。","voice":"aling","instructions":"有些犹豫。","speed":1.0,"pause_ms":600}
+  ]
+}
+```
+
+Speaker labels (up to 20 characters) are not spoken. Matching leading labels such as
+`小雨：` and outer quotation marks are stripped; actual spoken names such as
+`阿零，你胸口为什么在发光？` remain. Emotion instructions are passed separately to
+CosyVoice instruct2; their effectiveness requires auditioning, not a guarantee.
+
+Limits: 1-30 lines, total spoken text at most 500 characters, pause 0-5000 ms
+(default 300); voice/speed/instructions are configured per line. Referenced voices
+are checked before requesting Gateway frames. Missing voices fail early, with no
+silent substitution. `audioDialogues` preserves dialogue metadata in saved video jobs.
+
+Authenticated endpoints using the same media-service bearer key:
+
+- `GET /api/v1/audio/voices`: installed CosyVoice voice profiles.
+- `POST /api/v1/audio/speech`: accepts the audio object above (or legacy text/voice)
+  and returns a WAV for audition without generating Gateway video frames.
+
+The runtime generates lines serially, gently aligns per-line RMS with bounded gain
+and peak protection, and inserts sample-accurate silence before the existing AAC/MP4
+pipeline. This is not professional LUFS mastering or lip synchronization. Segment-level
+CPU fallback remains active. Legacy single-text clients retain their existing behavior.
+
+Only `demo` is initially installed. Two labels assigned to `demo` still have one timbre.
+For distinct voices, install authorized reference WAV/transcript pairs in CosyVoice,
+restart that container, and refresh the UI voice list. WAV previews remain in audio storage.
+
+### CosyVoice single-text audio options
 
 `audio` is optional; omitting it (or setting it to null) preserves silent video generation.
 It is consumed by media-service and never forwarded to Gateway/ComfyUI.

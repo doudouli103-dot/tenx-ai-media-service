@@ -53,6 +53,33 @@ public class VideoJobService {
     }
 
     public MediaJob submit(JsonNode request) {
+        MediaJob job = prepare(request);
+        ObjectNode requestCopy = ((ObjectNode) request).deepCopy();
+        SpeechRequest speech = SpeechRequest.parse(requestCopy.remove("audio"));
+        try {
+            executor.execute(() -> run(job, requestCopy, speech));
+        } catch (RuntimeException exception) {
+            job.setError("Video job queue is full or unavailable");
+            job.transition(JobStatus.FAILED);
+            save(job);
+        }
+        return job;
+    }
+
+    /** Called by the drama worker directly; never enqueue and wait on the same executor. */
+    public MediaJob generateInline(ObjectNode request, String parentId, int duration,
+                                  java.util.function.Consumer<MediaJob> onCreated) {
+        MediaJob job = prepare(request);
+        job.setParentId(parentId);
+        save(job);
+        onCreated.accept(job);
+        ObjectNode copy = request.deepCopy();
+        SpeechRequest speech = SpeechRequest.parse(copy.remove("audio"));
+        run(job, copy, speech, duration);
+        return job;
+    }
+
+    private MediaJob prepare(JsonNode request) {
         if (request == null || !request.isObject()) {
             throw new IllegalArgumentException("JSON object request body is required");
         }
@@ -66,19 +93,13 @@ public class VideoJobService {
         if (speech != null) {
             job.setAudioText(speech.getText());
             job.setAudioVoice(speech.getVoice());
+            job.setAudioDialogues(speech.getDialogues());
         }
         job.setProjectId(optionalText(request, "project_id"));
         job.setSceneId(optionalText(request, "scene_id"));
         job.setShotId(optionalText(request, "shot_id"));
         job.setStartImageResultId(optionalText(request, "start_image_result_id"));
         save(job);
-        try {
-            executor.execute(() -> run(job, requestCopy, speech));
-        } catch (RuntimeException exception) {
-            job.setError("Video job queue is full or unavailable");
-            job.transition(JobStatus.FAILED);
-            save(job);
-        }
         return job;
     }
 
@@ -87,7 +108,24 @@ public class VideoJobService {
     }
 
     private void run(MediaJob job, ObjectNode request, SpeechRequest speech) {
+        run(job, request, speech, null);
+    }
+
+    private void run(MediaJob job, ObjectNode request, SpeechRequest speech, Integer strictDuration) {
         try {
+            if (speech != null) cosyvoice.validateVoices(speech);
+            SpeechAudio audio = null;
+            if (strictDuration != null && speech != null) {
+                job.transition(JobStatus.GENERATING_AUDIO);
+                save(job);
+                audio = cosyvoice.generate(job.getId(), speech);
+                job.setAudioId(audio.getId());
+                job.setAudioDurationSeconds(audio.getDurationSeconds());
+                if (audio.getDurationSeconds() > strictDuration) {
+                    throw new IllegalArgumentException("Dialogue is " + audio.getDurationSeconds()
+                            + "s, longer than the " + strictDuration + "s shot. Shorten dialogue or split the shot; no freeze-frame padding is used.");
+                }
+            }
             job.transition(JobStatus.GENERATING_FRAMES);
             save(job);
             JsonNode manifest = gateway.post()
@@ -113,8 +151,7 @@ public class VideoJobService {
 
             Path frameDirectory = frameDownloader.download(job.getId(), frames.resultId,
                     frames.baseUrl, frames.files);
-            SpeechAudio audio = null;
-            if (speech != null) {
+            if (speech != null && strictDuration == null) {
                 job.transition(JobStatus.GENERATING_AUDIO);
                 save(job);
                 audio = cosyvoice.generate(job.getId(), speech);
@@ -124,8 +161,11 @@ public class VideoJobService {
             job.transition(JobStatus.ENCODING);
             save(job);
 
-            Path video = audio == null ? ffmpeg.encode(job.getId(), frameDirectory, frames.fps)
+            Path video = strictDuration != null
+                    ? ffmpeg.encodeShot(job.getId(), frameDirectory, frames.fps, frames.frameCount, audio, strictDuration)
+                    : audio == null ? ffmpeg.encode(job.getId(), frameDirectory, frames.fps)
                     : ffmpeg.encode(job.getId(), frameDirectory, frames.fps, frames.frameCount, audio);
+            if (strictDuration != null) job.setDynamicDurationSeconds(strictDuration.doubleValue());
             if (!Files.isRegularFile(video) || !Files.isReadable(video) || Files.size(video) == 0) {
                 throw new IllegalStateException("FFmpeg completed without a readable MP4");
             }

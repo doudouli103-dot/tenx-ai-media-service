@@ -70,6 +70,39 @@ public class CosyVoiceServiceTest {
                 mapper.createObjectNode().put("text", new String(new char[501]).replace('\0', 'a'))));
     }
 
+    @Test public void parsesDialogueWithoutSpeakingLabelsOrRemovingSpokenNames() throws Exception {
+        JsonNode node = mapper.readTree("{\"dialogues\":[{\"speaker\":\"小雨\",\"text\":\"小雨：你好。\",\"voice\":\"xiaoyu\",\"instructions\":\"轻声说。\",\"pause_ms\":400},"
+                + "{\"speaker\":\"小雨\",\"text\":\"阿零，你胸口为什么在发光？\",\"voice\":\"robot\",\"pause_ms\":0}]}");
+        SpeechRequest parsed = SpeechRequest.parse(node);
+        assertFalse(parsed.getPayload().has("input"));
+        assertEquals("你好。", parsed.getDialogues().get(0).path("text").asText());
+        assertEquals("轻声说。", parsed.getDialogues().get(0).path("instructions").asText());
+        assertEquals(400, parsed.getDialogues().get(0).path("pause_ms").asInt());
+        assertTrue(parsed.getDialogues().get(1).path("text").asText().startsWith("阿零，"));
+        assertEquals("dialogue", parsed.getVoice());
+    }
+
+    @Test public void rejectsInvalidDialoguePayloads() throws Exception {
+        for (String json : new String[] {"{\"dialogues\":[]}", "{\"text\":\"你好\",\"dialogues\":[{\"text\":\"你好\"}]}",
+                "{\"dialogues\":[{\"text\":\"你好\",\"pause_ms\":5001}]}",
+                "{\"dialogues\":[{\"text\":\"你好\",\"pause_ms\":2.5}]}",
+                "{\"dialogues\":[{\"text\":\"你好\",\"voice\":\"../bad\"}]}",
+                "{\"dialogues\":[{\"text\":\"你好\",\"dialogues\":[]}]}",
+                "{\"dialogues\":[{\"speaker\":\"小雨\",\"text\":\"小雨：\"}]}"}) {
+            JsonNode request = mapper.readTree(json);
+            assertThrows(IllegalArgumentException.class, () -> SpeechRequest.parse(request), json);
+        }
+    }
+
+    @Test public void sendsDialoguePayloadToRuntimeInOrder() throws Exception {
+        CosyVoiceService service = runtime(200, wav(2));
+        SpeechRequest request = SpeechRequest.parse(mapper.readTree("{\"dialogues\":[{\"speaker\":\"小雨\",\"text\":\"你好。\",\"voice\":\"xiaoyu\"},{\"speaker\":\"阿零\",\"text\":\"我来啦。\",\"voice\":\"robot\"}]}"));
+        service.generate(JOB, request);
+        assertFalse(received.get().has("input"));
+        assertEquals("xiaoyu", received.get().path("dialogues").get(0).path("voice").asText());
+        assertEquals("robot", received.get().path("dialogues").get(1).path("voice").asText());
+    }
+
     private SpeechRequest request() { return SpeechRequest.parse(mapper.createObjectNode().put("text", "你好，世界。")); }
 
     private CosyVoiceService runtime(int status, byte[] response) throws Exception {

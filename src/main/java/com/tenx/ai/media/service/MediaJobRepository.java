@@ -53,6 +53,15 @@ public class MediaJobRepository {
                 }
             });
         }
+        // Child metadata may have been saved after its parent's last checkpoint.
+        for (MediaJob job : jobs.values()) {
+            if (job.getDramaShots() == null) continue;
+            for (int index = 0; index < job.getDramaShots().size(); index++) {
+                MediaJob child = job.getDramaShots().get(index);
+                if (child != null) job.getDramaShots().set(index, jobs.getOrDefault(child.getId(), child));
+            }
+            save(job);
+        }
     }
 
     public synchronized MediaJob save(MediaJob job) throws IOException {

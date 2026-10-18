@@ -27,6 +27,12 @@ public class MediaJob {
     private String audioVoice;
     private String audioId;
     private Double audioDurationSeconds;
+    private com.fasterxml.jackson.databind.JsonNode audioDialogues;
+    private String parentId;
+    private com.fasterxml.jackson.databind.JsonNode dramaRequest;
+    private java.util.List<MediaJob> dramaShots;
+    private Integer currentShotIndex;
+    private Double dynamicDurationSeconds;
 
     public MediaJob() {
     }
@@ -98,4 +104,16 @@ public class MediaJob {
     public void setAudioId(String value) { this.audioId = value; }
     public Double getAudioDurationSeconds() { return audioDurationSeconds; }
     public void setAudioDurationSeconds(Double value) { this.audioDurationSeconds = value; }
+    public com.fasterxml.jackson.databind.JsonNode getAudioDialogues() { return audioDialogues; }
+    public void setAudioDialogues(com.fasterxml.jackson.databind.JsonNode value) { this.audioDialogues = value; }
+    public String getParentId() { return parentId; }
+    public void setParentId(String value) { parentId = value; }
+    public com.fasterxml.jackson.databind.JsonNode getDramaRequest() { return dramaRequest; }
+    public void setDramaRequest(com.fasterxml.jackson.databind.JsonNode value) { dramaRequest = value; }
+    public java.util.List<MediaJob> getDramaShots() { return dramaShots; }
+    public void setDramaShots(java.util.List<MediaJob> value) { dramaShots = value; }
+    public Integer getCurrentShotIndex() { return currentShotIndex; }
+    public void setCurrentShotIndex(Integer value) { currentShotIndex = value; }
+    public Double getDynamicDurationSeconds() { return dynamicDurationSeconds; }
+    public void setDynamicDurationSeconds(Double value) { dynamicDurationSeconds = value; }
 }
